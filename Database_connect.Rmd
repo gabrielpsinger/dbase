@@ -1,0 +1,218 @@
+---
+title: "Database Connection and Query Instructions"
+author: "Gabriel Singer"
+date: "9/12/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(odbc)
+library(dbplyr)
+library(DBI)
+library(tidyverse)
+
+```
+
+## Connect to the Database
+First you need to configure the ODBC connection within Windows.  You will need to setup a User DSN.  It appears that Matt P. needs to allow the connection to occur by messing with the database settings (I have no idea what this actually entails)
+
+```{r connect}
+sort(unique(odbcListDrivers()[[1]]))
+
+
+# set up the connection
+con <- dbConnect(odbc(), 
+                 Driver   = "SQL Server", 
+                 Server   = "169.237.35.195", 
+                 Database = "smolt_tracking"
+                 )
+
+# view tables in the DB
+dbListTables(con)
+
+# explore the felds in a particular table
+dbListFields(con, "Detections_all")
+dbListFields(con, "Tagged_Fish")
+
+
+# total number of detections
+dets <- tbl(con, "Detections_all")
+dets %>% 
+  tally()
+
+# total number of tagged fish in the database
+n_fish <- tbl(con, "Tagged_Fish")
+n_fish %>% 
+  tally()
+
+# total number of species
+species <- tbl(con, "Tagged_Fish")
+species %>% 
+  distinct(Species) %>% 
+  tally()
+
+```
+
+
+## Queries
+ You can  write SQL querires right in the code chunk in Rmarkdown, you can then output the results fo the query directly into a dataframe that can be used in the Rmarkdown document.
+
+```{sql, connection=con, output.var = "test"}
+SELECT "TagID"
+FROM "Detections_all"
+GROUP BY "TagID"
+```
+
+Here is one that will return all of the different study names in the database.  
+```{sql, connection=con, output.var = "studyIDs"}
+SELECT "StudyID", "Agency"
+FROM "StudyID"
+```
+
+```{sql, connection=con, output.var = "qry_ws"}
+SELECT
+	TF.Species, DA.FishID, DA.TagID, TF.StudyID, SI.[PI], 
+	TF.[Length], TF.Length_Type, DA.Codespace, TF.DateTagged, TF.Date_Released, 
+	TF.Sex, TF.Life_Stage, DA.DetectDate,
+	ML.Lat, ML.Lon, DA.Location as DetectionLocation, ML.RiverKm, ML.General_Location, DA.VR2SN, 
+	Dep.Depth as DepthOfReceiver, DA.Notes as DeployNotes
+FROM
+	derived__Detections_all_with_loc_where_known as DA INNER JOIN
+	Tagged_Fish as TF ON (DA.FishID=TF.FishID) LEFT OUTER JOIN
+	StudyID as SI ON (SI.StudyID=TF.StudyID) LEFT OUTER JOIN
+	Monitor_Locations as ML ON (ML.Location=DA.Location) LEFT OUTER JOIN
+	Deployments as Dep on Dep.Location=DA.Location and Dep.Start=DA.Start and Dep.Stop=DA.Stop
+WHERE
+	TF.Species = 'White_Sturgeon' and TF.StudyID in ('WS-UCD-YoloBypass-2012','Yolo_Bypass_WST_2014')
+ORDER BY
+	DetectDate, FishID, RiverKm, DA.Location
+
+```
+
+query by species and studyID		
+```{sql, connection = con, output.var = "dets_by_studyID_and_species"}
+	select 
+		TF.Species, 
+		TF.StudyID, 
+		count(DA.DetectDate) as cnt 
+	from derived__Detections_all_with_loc_where_known as DA
+		left outer join Tagged_Fish as TF on 
+			DA.FishID=TF.FishID
+	WHERE
+	TF.Species = 'Steelhead'
+	group by
+		TF.Species,
+		TF.StudyID
+```
+
+```{sql, connection = con, output.var = "CALFED_sth"}
+SELECT
+	TF.Species, DA.FishID, DA.TagID, TF.StudyID, SI.[PI], 
+	TF.[Length], TF.Length_Type, DA.Codespace, TF.DateTagged, TF.Date_Released, 
+	TF.Sex, TF.Life_Stage, DA.DetectDate,
+	ML.Lat, ML.Lon, DA.Location as DetectionLocation, ML.RiverKm, ML.General_Location, DA.VR2SN, 
+	Dep.Depth as DepthOfReceiver, DA.Notes as DeployNotes
+FROM
+	derived__Detections_all_with_loc_where_known as DA INNER JOIN
+	Tagged_Fish as TF ON (DA.FishID=TF.FishID) LEFT OUTER JOIN
+	StudyID as SI ON (SI.StudyID=TF.StudyID) LEFT OUTER JOIN
+	Monitor_Locations as ML ON (ML.Location=DA.Location) LEFT OUTER JOIN
+	Deployments as Dep on Dep.Location=DA.Location and Dep.Start=DA.Start and Dep.Stop=DA.Stop
+WHERE
+	TF.StudyID in ('CALFED-STH-04','CALFED-STH-05')
+ORDER BY
+	DetectDate, FishID, RiverKm, DA.Location
+
+```
+
+```{sql, connection = con, output.var = "dets_by_studyid"}
+	select 
+		TF.Species, 
+		TF.StudyID, 
+		count(DA.DetectDate) as cnt 
+	from derived__Detections_all_with_loc_where_known as DA
+		left outer join Tagged_Fish as TF on 
+			DA.FishID=TF.FishID
+	group by
+		TF.Species,
+		TF.StudyID
+
+
+		
+
+```
+
+
+```{sql, connection = con, output.var = "dets_by_species"}
+	select 
+		TF.Species, 
+		count(DA.DetectDate) as cnt 
+	from derived__Detections_all_with_loc_where_known as DA
+		left outer join Tagged_Fish as TF on 
+			DA.FishID=TF.FishID
+	group by
+		TF.Species
+```
+
+
+
+You can also use dbplyr to write sql queries using dplyr verbage
+```{r dbplyr_test}
+qry_test <- tbl(con, "Tagged_Fish") %>% 
+  group_by(StudyID, Species) %>% 
+  summarize( N = n(), Weight = mean(Weight), Length = mean(Length, na.rm = T))
+
+show_query(qry_test)
+
+ggplot(qry_test, aes(x = N, y = Length)) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+```
+
+```{r dets_plot}
+library(magick)
+library(cowplot)
+
+names_clean <- c("Unassigned", "Channel Catfish", "Chinook Salmon", "Green Sturgeon", "Largemouth Bass", "Sacramento Pikeminnow", "Sevengill Shark", "Smallmouth Bass", "Spotted Bass", "Steelhead Trout", "Striped Bass", "White Catfish", "White Sturgeon")
+
+
+
+dets_by_species_sort <- dets_by_species %>% 
+  mutate(name_cln = names_clean) %>% 
+  arrange(cnt)
+  
+  
+
+sturgeon <- ("images/sturgeon.png")
+trout <- ("images/trout-silhouette-flip.png")
+lmb <- ("images/lmb.png")
+catfish <- ("images/catfish_silhoutte_test.png")
+shark <- ("images/shark.png")
+
+
+p <- ggplot(dets_by_species_sort) + 
+  geom_bar(aes(x = reorder(name_cln, cnt), y = cnt/1000000), stat = 'identity') + 
+  labs(y = "Number of Detections (Millions)", x = "") + 
+  coord_flip() + 
+  theme_classic()
+
+
+
+ggdraw(p) + 
+  draw_image(sturgeon, scale = 0.25, hjust = -0.35, vjust = -0.35) + 
+  draw_image(trout, scale = 0.17, hjust = -0.25, vjust = -0.21) +
+  draw_image(lmb, scale = 0.17, hjust = -0.15, vjust = -0.03) + 
+  draw_image(shark, scale = 0.25, hjust = -0.05, vjust = 0.13) + 
+  draw_image(catfish, scale = 0.15, hjust = 0.08, vjust = 0.31) + 
+  ggsave("fig_output/detections_classic_unassigned.jpg", dpi = 400, width = 7, height = 4)
+
+  
+```
+
+  
+  
+  
+  
+  
+  
