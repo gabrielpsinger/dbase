@@ -52,6 +52,11 @@ species %>%
   distinct(Species) %>% 
   tally()
 
+# tag type
+tags <- tbl(con, "Tag_Type")
+types <-tags %>% 
+  distinct(Tag_Type)
+
 ```
 
 
